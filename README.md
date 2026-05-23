@@ -11,6 +11,6 @@
 
 ## 安装
 
-1. 安装 [Tampermonkey](https://www.tampermonkey.net/)
-2. 打开 `signature-wall-upload.user.js`，Tampermonkey 自动弹出安装
+1. 安装 [Tampermonkey](https://www.tampermonkey.net/)或微软插件商店
+2. 将 `signature-wall-upload.user.js`拖入浏览器或Tampermonkey脚本安装页，Tampermonkey 自动弹出安装
 3. 访问 https://msensen.top/signature-wall/ 使用
