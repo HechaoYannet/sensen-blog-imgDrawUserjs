@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         签名墙 - 图片上传 & 动图转换
+// @name         签名墙 - 图片上传
 // @namespace    https://msensen.top/
 // @version      2.1
-// @description  为涂鸦签名墙添加上传图片功能，支持 GIF 自动转 APNG
+// @description  为涂鸦签名墙添加上传图片与 GIF 动图功能
 // @author       You
 // @match        https://msensen.top/signature-wall*
 // @require      https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js
