@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         签名墙 - 图片上传
 // @namespace    https://msensen.top/
-// @version      2.1
+// @version      2.1.1
 // @description  为涂鸦签名墙添加上传图片与 GIF 动图功能
 // @author       You
 // @match        https://msensen.top/signature-wall*
@@ -159,6 +159,11 @@
     var nicknameInput = document.getElementById('nicknameInput');
 
     if (!canvas || !placeholder || !formActions || !form) return;
+
+    // ── 0. Expand grid to 3 columns ─────────────────────────────
+    var gridFix = document.createElement('style');
+    gridFix.textContent = '@media(min-width:521px){.form-actions[data-astro-cid-3pxndrdx]{grid-template-columns:repeat(3,1fr)}}';
+    document.head.appendChild(gridFix);
 
     // ── 1. Single upload button ─────────────────────────────────
     var file = document.createElement('input');
