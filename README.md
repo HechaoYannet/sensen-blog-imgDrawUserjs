@@ -13,7 +13,8 @@
 ## 测试
 
 - 直接打开森森的博客测试就好，森森是不会生气的😄
-- 静态图测试：`/TestImg/` 下有 Castorice 和 Phainon 的图
+- 我贴心的为大家准备了测试图片哦~
+- 静态图测试：`/TestImg/` 下有 Castorice 和 Phainon 的表情图
 - 动图测试：`/TestGif/` 下有奶龙 GIF（52 帧）
 
 <img src="https://github.com/HechaoYannet/sensen-blog-imgDrawUserjs/blob/master/TestImg/Castorice-luma.jpg?raw=true" width="210px">
