@@ -14,93 +14,89 @@
     document.head.appendChild(s);
   });
 
-  // ── Everything below is the userscript body (no @require header) ──
-  const API = 'https://msensen.top/api/signature-wall';
-  const MAX_PX = 160;
+  // ── Everything below is the userscript body ──
+  var API = 'https://msensen.top/api/signature-wall';
+  var MAX_PX = 200;
+  var pendingGif = null;
 
   function parseGIF(buffer) {
-    const d = new Uint8Array(buffer);
-    let p = 6;
-    const width = d[p] | (d[p+1] << 8); p += 2;
-    const height = d[p] | (d[p+1] << 8); p += 2;
-    const flags = d[p]; p += 1;
-    p += 2;
-    let gct = null;
-    if (flags & 0x80) { const sz = 3 * (2 << (flags & 0x07)); gct = d.slice(p, p + sz); p += sz; }
-    const frames = [], delays = [];
-    let transparentIdx = -1, disposal = 0;
+    var d = new Uint8Array(buffer); var p = 6;
+    var width = d[p] | (d[p+1] << 8); p += 2;
+    var height = d[p] | (d[p+1] << 8); p += 2;
+    var flags = d[p]; p += 1; p += 2;
+    var gct = null;
+    if (flags & 0x80) { var sz = 3 * (2 << (flags & 0x07)); gct = d.slice(p, p + sz); p += sz; }
+    var frames = [], delays = [];
+    var transparentIdx = -1, disposal = 0;
     while (p < d.length) {
-      const bt = d[p]; p++;
+      var bt = d[p]; p++;
       if (bt === 0x3B) break;
       if (bt === 0x2C) {
-        const left = d[p] | (d[p+1] << 8); p += 2;
-        const top = d[p] | (d[p+1] << 8); p += 2;
-        const iw = d[p] | (d[p+1] << 8); p += 2;
-        const ih = d[p] | (d[p+1] << 8); p += 2;
-        const fl = d[p]; p += 1;
-        let lct = null;
-        if (fl & 0x80) { const sz = 3 * (2 << (fl & 0x07)); lct = d.slice(p, p + sz); p += sz; }
-        const interlaced = !!(fl & 0x40);
-        const palette = lct || gct;
-        const minCodeSize = d[p]; p++;
-        const lzwBytes = [];
-        while (true) { const len = d[p]; p++; if (len === 0) break; for (let i = 0; i < len; i++) lzwBytes.push(d[p+i]); p += len; }
-        const pixels = lzwDecode(lzwBytes, minCodeSize, palette, transparentIdx, iw, ih, interlaced);
-        frames.push({ rgba: pixels, w: iw, h: ih, left, top, disposal });
+        var left = d[p] | (d[p+1] << 8); p += 2;
+        var top = d[p] | (d[p+1] << 8); p += 2;
+        var iw = d[p] | (d[p+1] << 8); p += 2;
+        var ih = d[p] | (d[p+1] << 8); p += 2;
+        var fl = d[p]; p += 1;
+        var lct = null;
+        if (fl & 0x80) { var lsz = 3 * (2 << (fl & 0x07)); lct = d.slice(p, p + lsz); p += lsz; }
+        var interlaced = !!(fl & 0x40);
+        var palette = lct || gct;
+        var minCodeSize = d[p]; p++;
+        var lzwBytes = [];
+        while (true) { var len = d[p]; p++; if (len === 0) break; for (var li = 0; li < len; li++) lzwBytes.push(d[p+li]); p += len; }
+        var rgba = lzwDecode(lzwBytes, minCodeSize, palette, transparentIdx, iw, ih, interlaced);
+        frames.push({ rgba: rgba, w: iw, h: ih, left: left, top: top, disposal: disposal });
         while (delays.length < frames.length) delays.push(10);
       } else if (bt === 0x21) {
-        const et = d[p]; p++;
-        if (et === 0xF9) { p++; const pk = d[p]; p++; const delay = d[p] | (d[p+1] << 8); p += 2; transparentIdx = (pk & 0x01) ? d[p] : -1; p++; disposal = (pk >> 2) & 0x07; p++; delays.push(delay || 10); }
-        else { while (p < d.length) { const len = d[p]; p++; if (len === 0) break; p += len; } }
+        var et = d[p]; p++;
+        if (et === 0xF9) { p++; var pk = d[p]; p++; var delay = d[p] | (d[p+1] << 8); p += 2; transparentIdx = (pk & 0x01) ? d[p] : -1; p++; disposal = (pk >> 2) & 0x07; p++; delays.push(delay || 10); }
+        else { while (p < d.length) { var slen = d[p]; p++; if (slen === 0) break; p += slen; } }
       }
     }
-    return { width, height, frames, delays };
+    return { width: width, height: height, frames: frames, delays: delays };
   }
 
   function lzwDecode(data, minCodeSize, palette, transparentIdx, fw, fh, interlaced) {
-    const clearCode = 1 << minCodeSize, eoiCode = clearCode + 1;
-    let codeSize = minCodeSize + 1, maxCode = (1 << codeSize) - 1, nextCode = eoiCode + 1;
-    const bits = [];
-    for (let i = 0; i < data.length; i++) for (let j = 0; j < 8; j++) bits.push((data[i] >> j) & 1);
-    let bp = 0;
-    function readCode() { let c = 0; for (let i = 0; i < codeSize; i++) { if (bp >= bits.length) return -1; c |= bits[bp++] << i; } return c; }
-    const table = new Map();
-    for (let i = 0; i < clearCode; i++) table.set(i, [i]);
-    let prevBytes = null;
-    const output = [];
+    var clearCode = 1 << minCodeSize, eoiCode = clearCode + 1;
+    var codeSize = minCodeSize + 1, maxCode = (1 << codeSize) - 1, nextCode = eoiCode + 1;
+    var bits = [];
+    for (var i = 0; i < data.length; i++) for (var j = 0; j < 8; j++) bits.push((data[i] >> j) & 1);
+    var bp = 0;
+    function readCode() { var c = 0; for (var i = 0; i < codeSize; i++) { if (bp >= bits.length) return -1; c |= bits[bp++] << i; } return c; }
+    var table = new Map();
+    for (var ti = 0; ti < clearCode; ti++) table.set(ti, [ti]);
+    var prevBytes = null; var output = [];
     while (true) {
-      const code = readCode();
+      var code = readCode();
       if (code < 0 || code === eoiCode) break;
-      if (code === clearCode) { table.clear(); for (let i = 0; i < clearCode; i++) table.set(i, [i]); nextCode = eoiCode + 1; codeSize = minCodeSize + 1; maxCode = (1 << codeSize) - 1; prevBytes = null; continue; }
-      let entry;
+      if (code === clearCode) { table.clear(); for (var ci = 0; ci < clearCode; ci++) table.set(ci, [ci]); nextCode = eoiCode + 1; codeSize = minCodeSize + 1; maxCode = (1 << codeSize) - 1; prevBytes = null; continue; }
+      var entry;
       if (table.has(code)) { entry = table.get(code); }
       else if (code === nextCode && prevBytes) { entry = prevBytes.concat([prevBytes[0]]); }
       else { break; }
-      for (let i = 0; i < entry.length; i++) output.push(entry[i]);
+      for (var ei = 0; ei < entry.length; ei++) output.push(entry[ei]);
       if (prevBytes && nextCode < 4096) { table.set(nextCode, prevBytes.concat([entry[0]])); nextCode++; if (nextCode > maxCode && codeSize < 12) { codeSize++; maxCode = (1 << codeSize) - 1; } }
       prevBytes = entry;
     }
-    const rgba = new Uint8Array(fw * fh * 4);
-    const totalPixels = fw * fh;
-    const pixels = output.slice(0, totalPixels);
-    const rawIdx = new Uint16Array(fw * fh);
+    var rgba = new Uint8Array(fw * fh * 4);
+    var pixels = output.slice(0, fw * fh);
+    var rawIdx = new Uint16Array(fw * fh);
     if (interlaced) {
-      const passes = [[0,8],[4,8],[2,4],[1,2]]; let idx = 0;
-      for (const [start, step] of passes) for (let y = start; y < fh; y += step) for (let x = 0; x < fw; x++) rawIdx[y * fw + x] = idx++;
-    } else { for (let i = 0; i < fw * fh; i++) rawIdx[i] = i; }
-    for (let i = 0; i < Math.min(pixels.length, totalPixels); i++) {
-      const colorIdx = pixels[i], pi = rawIdx[i] * 4;
-      if (colorIdx === transparentIdx) { rgba[pi]=rgba[pi+1]=rgba[pi+2]=rgba[pi+3]=0; }
-      else if (palette && colorIdx * 3 + 2 < palette.length) { rgba[pi]=palette[colorIdx*3]; rgba[pi+1]=palette[colorIdx*3+1]; rgba[pi+2]=palette[colorIdx*3+2]; rgba[pi+3]=255; }
-      else { rgba[pi]=rgba[pi+1]=rgba[pi+2]=0; rgba[pi+3]=255; }
+      var passes = [[0,8],[4,8],[2,4],[1,2]]; var idx = 0;
+      for (var pi = 0; pi < passes.length; pi++) for (var y = passes[pi][0]; y < fh; y += passes[pi][1]) for (var x = 0; x < fw; x++) rawIdx[y * fw + x] = idx++;
+    } else { for (var ri = 0; ri < fw * fh; ri++) rawIdx[ri] = ri; }
+    for (var oi = 0; oi < Math.min(pixels.length, fw * fh); oi++) {
+      var colorIdx = pixels[oi], ri2 = rawIdx[oi] * 4;
+      if (colorIdx === transparentIdx) { rgba[ri2]=rgba[ri2+1]=rgba[ri2+2]=rgba[ri2+3]=0; }
+      else if (palette && colorIdx * 3 + 2 < palette.length) { rgba[ri2]=palette[colorIdx*3]; rgba[ri2+1]=palette[colorIdx*3+1]; rgba[ri2+2]=palette[colorIdx*3+2]; rgba[ri2+3]=255; }
+      else { rgba[ri2]=rgba[ri2+1]=rgba[ri2+2]=0; rgba[ri2+3]=255; }
     }
     return rgba;
   }
 
-  // ── Page inject ──
   function waitFor(sel, cb, max) {
     max = max || 50;
-    const el = document.querySelector(sel);
+    var el = document.querySelector(sel);
     if (el) return cb(el);
     if (max <= 0) return;
     setTimeout(function () { waitFor(sel, cb, max - 1); }, 200);
@@ -109,59 +105,66 @@
   function setStatus(el, msg, kind) { el.textContent = msg; el.dataset.kind = kind; }
 
   function inject() {
-    const canvas = document.getElementById('signatureCanvas');
-    const placeholder = document.getElementById('canvasPlaceholder');
-    const formActions = document.querySelector('.form-actions');
-    const statusEl = document.getElementById('formStatus');
-    const submitBtn = document.getElementById('submitButton');
-    const clearBtn = document.getElementById('clearButton');
-    if (!canvas || !placeholder || !formActions) return;
+    var canvas = document.getElementById('signatureCanvas');
+    var placeholder = document.getElementById('canvasPlaceholder');
+    var formActions = document.querySelector('.form-actions');
+    var form = document.getElementById('signatureForm');
+    var statusEl = document.getElementById('formStatus');
+    var submitBtn = document.getElementById('submitButton');
+    var clearBtn = document.getElementById('clearButton');
+    var nicknameInput = document.getElementById('nicknameInput');
+    if (!canvas || !placeholder || !formActions || !form) return;
 
-    const gridFix = document.createElement('style');
-    gridFix.textContent = '@media(min-width:521px){.form-actions[data-astro-cid-3pxndrdx]{grid-template-columns:repeat(4,1fr)}}';
-    document.head.appendChild(gridFix);
-
-    const file = document.createElement('input');
+    var file = document.createElement('input');
     file.type = 'file'; file.accept = 'image/*'; file.style.display = 'none';
     document.body.appendChild(file);
 
-    const imgBtn = document.createElement('button');
-    imgBtn.className = 'wall-button secondary'; imgBtn.type = 'button';
-    imgBtn.setAttribute('data-astro-cid-3pxndrdx', '');
-    imgBtn.textContent = '上传图片'; imgBtn.title = '静态图片贴到画布';
-    imgBtn.addEventListener('click', () => { file.dataset.mode = 'static'; file.accept = 'image/png,image/jpeg,image/webp'; file.click(); });
+    var uploadBtn = document.createElement('button');
+    uploadBtn.className = 'wall-button secondary'; uploadBtn.type = 'button';
+    uploadBtn.setAttribute('data-astro-cid-3pxndrdx', '');
+    uploadBtn.textContent = '上传图片'; uploadBtn.title = '图片贴到画布 / GIF 自动转 APNG';
+    uploadBtn.addEventListener('click', function () { file.click(); });
 
-    const gifBtn = document.createElement('button');
-    gifBtn.className = 'wall-button secondary'; gifBtn.type = 'button';
-    gifBtn.setAttribute('data-astro-cid-3pxndrdx', '');
-    gifBtn.textContent = '上传动图'; gifBtn.title = 'GIF 转 APNG';
-    gifBtn.addEventListener('click', () => { file.dataset.mode = 'gif'; file.accept = 'image/gif'; file.click(); });
+    formActions.insertBefore(uploadBtn, submitBtn);
 
-    formActions.insertBefore(gifBtn, formActions.firstChild);
-    formActions.insertBefore(imgBtn, formActions.firstChild);
+    clearBtn.addEventListener('click', function () { pendingGif = null; });
 
-    file.addEventListener('change', () => {
-      const f = file.files[0];
+    file.addEventListener('change', function () {
+      var f = file.files[0];
       if (!f) return;
-      if (file.dataset.mode === 'gif') handleGifUpload(f, statusEl, submitBtn, clearBtn);
-      else handleStatic(f, canvas, placeholder);
       file.value = '';
+      if (f.type === 'image/gif' || f.name.toLowerCase().endsWith('.gif')) {
+        loadGifToPending(f, canvas, placeholder, statusEl, submitBtn, clearBtn);
+      } else {
+        loadStaticToCanvas(f, canvas, placeholder);
+        pendingGif = null;
+      }
     });
+
+    var studio = form.parentElement;
+    studio.addEventListener('submit', function (e) {
+      // Debug: always log what's happening
+      setStatus(statusEl, 'DEBUG submit: pendingGif=' + (pendingGif ? 'SET('+pendingGif.frames.length+')' : 'NULL') + ' UPNG=' + typeof UPNG, 'info');
+      if (!pendingGif) return;
+      e.preventDefault();
+      e.stopPropagation();
+      submitGif(statusEl, submitBtn, clearBtn, nicknameInput);
+    }, true);
   }
 
-  function handleStatic(f, canvas, placeholder) {
-    const img = new Image();
-    img.onload = () => {
-      const ctx = canvas.getContext('2d'), rect = canvas.getBoundingClientRect();
-      const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
-      const dw = rect.width, dh = rect.height;
-      const scale = Math.min(dw / img.width, dh / img.height);
-      const w = img.width * scale, h = img.height * scale;
+  function loadStaticToCanvas(f, canvas, placeholder) {
+    var img = new Image();
+    img.onload = function () {
+      var ctx = canvas.getContext('2d'), rect = canvas.getBoundingClientRect();
+      var dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
+      var dw = rect.width, dh = rect.height;
+      var scale = Math.min(dw / img.width, dh / img.height);
+      var w = img.width * scale, h = img.height * scale;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, dw, dh);
-      ctx.drawImage(img, (dw-w)/2, (dh-h)/2, w, h);
+      ctx.drawImage(img, (dw - w) / 2, (dh - h) / 2, w, h);
       placeholder.hidden = true;
-      const cx = rect.left + dw/2, cy = rect.top + dh/2;
+      var cx = rect.left + dw / 2, cy = rect.top + dh / 2;
       canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: cx, clientY: cy, pointerId: 99, bubbles: true }));
       canvas.dispatchEvent(new PointerEvent('pointerup', { clientX: cx, clientY: cy, pointerId: 99, bubbles: true }));
       URL.revokeObjectURL(img.src);
@@ -169,83 +172,102 @@
     img.src = URL.createObjectURL(f);
   }
 
-  async function handleGifUpload(f, statusEl, submitBtn, clearBtn) {
-    if (typeof UPNG === 'undefined') { setStatus(statusEl, '编码库未加载', 'error'); return; }
+  function loadGifToPending(f, canvas, placeholder, statusEl, submitBtn, clearBtn) {
     setStatus(statusEl, '正在解析动图...', 'info');
-    submitBtn.disabled = clearBtn.disabled = true;
-    try {
-      const buf = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsArrayBuffer(f); });
-      const gif = parseGIF(buf);
-      const numFrames = gif.frames.length;
-      if (numFrames < 2) { setStatus(statusEl, '不是动图', 'error'); submitBtn.disabled = clearBtn.disabled = false; return; }
-      if (numFrames > 200) { setStatus(statusEl, '帧数过多', 'error'); submitBtn.disabled = clearBtn.disabled = false; return; }
-      const w = gif.width, h = gif.height;
-      let rw = w, rh = h;
-      if (Math.max(w, h) > MAX_PX) { const s = MAX_PX / Math.max(w, h); rw = Math.round(w*s); rh = Math.round(h*s); }
-      setStatus(statusEl, `转换 ${numFrames} 帧...`, 'info');
+    submitBtn.disabled = true; clearBtn.disabled = true;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        var gif = parseGIF(reader.result);
+        if (gif.frames.length < 2) {
+          setStatus(statusEl, '不是动图（仅1帧）', 'info');
+          drawGifFrame(gif, 0, canvas, placeholder); pendingGif = null;
+          submitBtn.disabled = false; clearBtn.disabled = false; return;
+        }
+        if (gif.frames.length > 200) {
+          setStatus(statusEl, '帧数过多(' + gif.frames.length + ')', 'error');
+          submitBtn.disabled = false; clearBtn.disabled = false; return;
+        }
+        pendingGif = gif;
+        window.__pendingGif = gif; // DEBUG: expose for eval check
+        drawGifFrame(gif, 0, canvas, placeholder);
+        setStatus(statusEl, '已加载动图(' + gif.frames.length + '帧,' + gif.width + 'x' + gif.height + ')，填写昵称后点「贴到墙上」', 'success');
+        submitBtn.disabled = false; clearBtn.disabled = false;
+      } catch (err) {
+        setStatus(statusEl, '解析失败: ' + (err.message || '?'), 'error');
+        submitBtn.disabled = false; clearBtn.disabled = false;
+      }
+    };
+    reader.onerror = function () { setStatus(statusEl, '读取失败', 'error'); submitBtn.disabled = false; clearBtn.disabled = false; };
+    reader.readAsArrayBuffer(f);
+  }
 
-      const canvasBuf = new Uint8Array(rw * rh * 4);
-      const apngFrames = [], apngDelays = [];
-      for (let i = 0; i < numFrames; i++) {
-        const frame = gif.frames[i];
-        let rgba = frame.rgba;
-        const sl = Math.round(frame.left * rw / w), st = Math.round(frame.top * rh / h);
-        const sfw = Math.round(frame.w * rw / w), sfh = Math.round(frame.h * rh / h);
+  function drawGifFrame(gif, frameIdx, canvas, placeholder) {
+    var frame = gif.frames[frameIdx];
+    var ctx = canvas.getContext('2d'), rect = canvas.getBoundingClientRect();
+    var dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
+    var dw = rect.width, dh = rect.height;
+    var scaleW = frame.w, scaleH = frame.h;
+    if (frame.w > dw || frame.h > dh) { var s = Math.min(dw / frame.w, dh / frame.h); scaleW = Math.round(frame.w * s); scaleH = Math.round(frame.h * s); }
+    var tmp = document.createElement('canvas'); tmp.width = frame.w; tmp.height = frame.h;
+    var tmpCtx = tmp.getContext('2d');
+    var imgData = tmpCtx.createImageData(frame.w, frame.h); imgData.data.set(frame.rgba); tmpCtx.putImageData(imgData, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, dw, dh);
+    ctx.drawImage(tmp, (dw - scaleW) / 2, (dh - scaleH) / 2, scaleW, scaleH);
+    placeholder.hidden = true;
+    var cx = rect.left + dw / 2, cy = rect.top + dh / 2;
+    canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: cx, clientY: cy, pointerId: 99, bubbles: true }));
+    canvas.dispatchEvent(new PointerEvent('pointerup', { clientX: cx, clientY: cy, pointerId: 99, bubbles: true }));
+  }
+
+  async function submitGif(statusEl, submitBtn, clearBtn, nicknameInput) {
+    var gif = pendingGif; if (!gif) return;
+    setStatus(statusEl, '正在转换' + gif.frames.length + '帧...', 'info');
+    submitBtn.disabled = true; clearBtn.disabled = true;
+    try {
+      var w = gif.width, h = gif.height, rw = w, rh = h;
+      if (Math.max(w, h) > MAX_PX) { var s = MAX_PX / Math.max(w, h); rw = Math.round(w * s); rh = Math.round(h * s); }
+      var canvasBuf = new Uint8Array(rw * rh * 4);
+      var apngFrames = [], apngDelays = [];
+      for (var i = 0; i < gif.frames.length; i++) {
+        var frame = gif.frames[i], rgba = frame.rgba;
+        var sl = Math.round(frame.left * rw / w), st = Math.round(frame.top * rh / h);
+        var sfw = Math.round(frame.w * rw / w), sfh = Math.round(frame.h * rh / h);
         if (frame.w !== sfw || frame.h !== sfh) {
-          const dst = new Uint8Array(sfw * sfh * 4);
-          const xr = frame.w / sfw, yr = frame.h / sfh;
-          for (let dy = 0; dy < sfh; dy++) for (let dx = 0; dx < sfw; dx++) {
-            const sx = Math.floor(dx*xr), sy = Math.floor(dy*yr);
-            const si = (sy*frame.w+sx)*4, di = (dy*sfw+dx)*4;
-            dst[di]=rgba[si]; dst[di+1]=rgba[si+1]; dst[di+2]=rgba[si+2]; dst[di+3]=rgba[si+3];
-          }
+          var dst = new Uint8Array(sfw * sfh * 4); var xr = frame.w / sfw, yr = frame.h / sfh;
+          for (var dy = 0; dy < sfh; dy++) for (var dx = 0; dx < sfw; dx++) { var sx = Math.floor(dx*xr), sy = Math.floor(dy*yr); var si = (sy*frame.w+sx)*4, di = (dy*sfw+dx)*4; dst[di]=rgba[si]; dst[di+1]=rgba[si+1]; dst[di+2]=rgba[si+2]; dst[di+3]=rgba[si+3]; }
           rgba = dst;
         }
         if (i === 0 || frame.disposal === 2) canvasBuf.fill(0);
-        for (let dy = 0; dy < sfh; dy++) {
-          if (st + dy >= rh) break;
-          for (let dx = 0; dx < sfw; dx++) {
-            if (sl + dx >= rw) break;
-            const si = (dy*sfw+dx)*4, di = ((st+dy)*rw+(sl+dx))*4;
-            if (rgba[si+3] > 128) { canvasBuf[di]=rgba[si]; canvasBuf[di+1]=rgba[si+1]; canvasBuf[di+2]=rgba[si+2]; canvasBuf[di+3]=255; }
-          }
-        }
-        apngFrames.push(new Uint8Array(canvasBuf));
-        apngDelays.push((gif.delays[i]||10)*10);
+        for (var dy = 0; dy < sfh; dy++) { if (st + dy >= rh) break; for (var dx = 0; dx < sfw; dx++) { if (sl + dx >= rw) break; var si2 = (dy*sfw+dx)*4, di2 = ((st+dy)*rw+(sl+dx))*4; if (rgba[si2+3] > 128) { canvasBuf[di2]=rgba[si2]; canvasBuf[di2+1]=rgba[si2+1]; canvasBuf[di2+2]=rgba[si2+2]; canvasBuf[di2+3]=255; } } }
+        apngFrames.push(new Uint8Array(canvasBuf)); apngDelays.push((gif.delays[i]||10)*10);
       }
-
       setStatus(statusEl, '编码中...', 'info');
-      const apngBuf = UPNG.encode(apngFrames, rw, rh, 256, apngDelays);
-      if (apngBuf.byteLength > 2*1024*1024) { setStatus(statusEl, '文件过大', 'error'); submitBtn.disabled = clearBtn.disabled = false; return; }
-
+      var apngBuf = UPNG.encode(apngFrames, rw, rh, 256, apngDelays);
+      if (apngBuf.byteLength > 900*1024) { setStatus(statusEl, '文件过大', 'error'); submitBtn.disabled = false; clearBtn.disabled = false; return; }
       setStatus(statusEl, '上传中...', 'info');
-      let binary = ''; const bytes = new Uint8Array(apngBuf);
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const dataUrl = 'data:image/png;base64,' + btoa(binary);
-      const nickname = (document.getElementById('nicknameInput')||{}).value || '';
-
-      const res = await fetch(API+'/signatures', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nickname,imageDataUrl:dataUrl,website:''}) });
-      const data = await res.json().catch(()=>({}));
-      if (!res.ok) throw new Error(data.error||'fail');
-
-      setStatus(statusEl, `动图已上墙 (${numFrames}帧, ${(apngBuf.byteLength/1024).toFixed(0)}KB)`, 'success');
-
-      const grid = document.getElementById('signatureGrid'), count = document.getElementById('wallCount');
-      if (grid && data.signature) {
-        const emptyEl = grid.querySelector('.empty-wall'); if (emptyEl) emptyEl.remove();
-        const card = document.createElement('article'); card.className = 'signature-card just-posted';
-        const img = document.createElement('img');
-        img.src = (data.signature.imageUrl||'').indexOf('http')===0 ? data.signature.imageUrl : API+data.signature.imageUrl.replace('/api/signature-wall','');
-        img.alt = (data.signature.nickname||'匿名')+' 的签名'; img.loading = 'lazy';
-        const meta = document.createElement('div'); meta.className = 'signature-meta';
-        const strong = document.createElement('strong'); strong.textContent = data.signature.nickname||'匿名访客';
-        const time = document.createElement('time'); time.dateTime = data.signature.createdAt;
+      var binary = ''; var bytes = new Uint8Array(apngBuf);
+      for (var bi = 0; bi < bytes.length; bi++) binary += String.fromCharCode(bytes[bi]);
+      var dataUrl = 'data:image/png;base64,' + btoa(binary);
+      var res = await fetch(API+'/signatures', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nickname: nicknameInput?nicknameInput.value:'', imageDataUrl: dataUrl, website:''}) });
+      var data = await res.json().catch(function(){return{};});
+      if (!res.ok) { throw new Error(res.status===413?'文件过大':(data.error||'fail')); }
+      setStatus(statusEl, '动图已上墙(' + gif.frames.length + '帧)', 'success');
+      var grid = document.getElementById('signatureGrid'), count = document.getElementById('wallCount');
+      if (grid && data.signature) { var emptyEl = grid.querySelector('.empty-wall'); if (emptyEl) emptyEl.remove();
+        var card = document.createElement('article'); card.className = 'signature-card just-posted';
+        var img = document.createElement('img'); img.src = (data.signature.imageUrl||'').indexOf('http')===0?data.signature.imageUrl:API+data.signature.imageUrl.replace('/api/signature-wall',''); img.alt=(data.signature.nickname||'匿名')+' 的签名'; img.loading='lazy';
+        var meta = document.createElement('div'); meta.className = 'signature-meta';
+        var strong = document.createElement('strong'); strong.textContent = data.signature.nickname||'匿名访客';
+        var time = document.createElement('time'); time.dateTime = data.signature.createdAt;
         time.textContent = new Intl.DateTimeFormat('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(data.signature.createdAt));
         meta.appendChild(strong); meta.appendChild(time); card.appendChild(img); card.appendChild(meta);
         grid.insertBefore(card, grid.firstChild);
         if (count) count.textContent = grid.querySelectorAll('.signature-card:not(.skeleton-card)').length + ' 张';
       }
-    } catch(err) { setStatus(statusEl, err.message||'转换失败', 'error'); }
+      pendingGif = null; nicknameInput.value = '';
+    } catch(err) { setStatus(statusEl, err.message||'fail', 'error'); }
     finally { submitBtn.disabled = false; clearBtn.disabled = false; }
   }
 
