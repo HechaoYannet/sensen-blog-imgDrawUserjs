@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         签名墙 - 图片上传
 // @namespace    https://msensen.top/
-// @version      2.2
+// @version      2.3
 // @description  为涂鸦签名墙添加上传图片与 GIF 动图功能
-// @author       You
+// @author       UnSultan
 // @match        https://msensen.top/signature-wall*
 // @require      https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js
 // @require      https://cdn.jsdelivr.net/npm/upng-js@2.1.0/UPNG.js
@@ -158,7 +158,7 @@
         loadGifToPending(f, canvas, placeholder, statusEl, submitBtn, clearBtn);
       } else {
         pendingGif = null;
-        loadStaticToPending(f, canvas, placeholder);
+        loadStaticToPending(f, canvas, placeholder, submitBtn, clearBtn);
       }
     });
 
@@ -170,31 +170,40 @@
       requestAnimationFrame(function () {
         redrawScheduled = false;
         if (pendingImage) {
-          redrawPending(canvas, placeholder);
+          redrawPending(canvas, placeholder, submitBtn, clearBtn);
         }
       });
     });
     resizeObserver.observe(canvas);
 
-    // ── 5. Hijack form submit for GIF ────────────────────────────
+    // ── 5. Hijack form submit for GIF / static image ─────────────
     var studio = form.parentElement;
     studio.addEventListener('submit', function (e) {
-      if (!pendingGif) return;
-      e.preventDefault();
-      e.stopPropagation();
-      submitGif(statusEl, submitBtn, clearBtn, nicknameInput);
+      if (pendingGif) {
+        e.preventDefault();
+        e.stopPropagation();
+        submitGif(statusEl, submitBtn, clearBtn, nicknameInput);
+        return;
+      }
+      if (pendingImage && pendingImage.type === 'static') {
+        e.preventDefault();
+        e.stopPropagation();
+        submitStatic(statusEl, submitBtn, clearBtn, nicknameInput, canvas);
+        return;
+      }
     }, true);
   }
 
   // ── Static image → store & draw ────────────────────────────────
-  function loadStaticToPending(f, canvas, placeholder) {
+  function loadStaticToPending(f, canvas, placeholder, submitBtn, clearBtn) {
     var reader = new FileReader();
     reader.onload = function () {
       var img = new Image();
       img.onload = function () {
         pendingImage = { type: 'static', img: img, fileUrl: reader.result };
         drawStaticImage(img, canvas, placeholder);
-        fireDirty(canvas);
+        submitBtn.disabled = false;
+        clearBtn.disabled = false;
         URL.revokeObjectURL(img.src);
       };
       img.src = reader.result;
@@ -285,11 +294,12 @@
   }
 
   // ── Re-draw after canvas resize ─────────────────────────────────
-  function redrawPending(canvas, placeholder) {
+  function redrawPending(canvas, placeholder, submitBtn, clearBtn) {
     if (!pendingImage) return;
     if (pendingImage.type === 'static') {
       drawStaticImage(pendingImage.img, canvas, placeholder);
-      fireDirty(canvas);
+      submitBtn.disabled = false;
+      clearBtn.disabled = false;
     } else if (pendingImage.type === 'gifFrame') {
       drawGifFrame(pendingImage.gif, pendingImage.frameIdx, canvas, placeholder);
       fireDirty(canvas);
@@ -300,8 +310,71 @@
   function fireDirty(canvas) {
     var rect = canvas.getBoundingClientRect();
     var cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-    canvas.dispatchEvent(new PointerEvent('pointerdown', { clientX: cx, clientY: cy, pointerId: 98, bubbles: true }));
-    canvas.dispatchEvent(new PointerEvent('pointerup',   { clientX: cx, clientY: cy, pointerId: 98, bubbles: true }));
+    var base = { clientX: cx, clientY: cy, pointerId: 98, pointerType: 'pen', isPrimary: true, pressure: 0.5, bubbles: true };
+    canvas.dispatchEvent(new PointerEvent('pointerdown', base));
+    canvas.dispatchEvent(new PointerEvent('pointermove', Object.assign({}, base, { clientX: cx + 5, clientY: cy + 5 })));
+    canvas.dispatchEvent(new PointerEvent('pointerup',   Object.assign({}, base, { clientX: cx + 5, clientY: cy + 5 })));
+  }
+
+  // ── Submit static image ─────────────────────────────────────────
+  async function submitStatic(statusEl, submitBtn, clearBtn, nicknameInput, canvas) {
+    setStatus(statusEl, '正在上传...', 'info');
+    submitBtn.disabled = true;
+    clearBtn.disabled = true;
+
+    try {
+      // Convert canvas to blob, try WebP then JPEG
+      var blob = await canvasToBlob(canvas, 'image/webp', 0.78);
+      if (!blob || blob.size > 520 * 1024) blob = await canvasToBlob(canvas, 'image/jpeg', 0.78);
+      if (!blob || blob.size > 620 * 1024) blob = await canvasToBlob(canvas, 'image/jpeg', 0.64);
+      if (!blob || blob.size > 680 * 1024) throw new Error('图片还是太大了，请清空后画得简单一点');
+
+      var dataUrl = await blobToDataUrl(blob);
+      var nickname = nicknameInput ? nicknameInput.value : '';
+
+      var res = await fetch(API + '/signatures', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: nickname, imageDataUrl: dataUrl, website: '' }),
+      });
+
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        if (res.status === 413) throw new Error('文件过大，服务器拒绝');
+        throw new Error(data.error || '上传失败 (' + res.status + ')');
+      }
+
+      setStatus(statusEl, '已贴上墙。', 'success');
+
+      var grid = document.getElementById('signatureGrid'), count = document.getElementById('wallCount');
+      if (grid && data.signature) {
+        var emptyEl = grid.querySelector('.empty-wall'); if (emptyEl) emptyEl.remove();
+        grid.insertBefore(buildCard(data.signature, true), grid.firstChild);
+        if (count) count.textContent = grid.querySelectorAll('.signature-card:not(.skeleton-card)').length + ' 张';
+      }
+
+      pendingGif = null; pendingImage = null;
+      if (nicknameInput) nicknameInput.value = '';
+    } catch (err) {
+      setStatus(statusEl, err.message || '上传失败', 'error');
+    } finally {
+      submitBtn.disabled = false; clearBtn.disabled = false;
+    }
+  }
+
+  function canvasToBlob(canvas, type, quality) {
+    return new Promise(function (resolve) {
+      canvas.toBlob(resolve, type, quality);
+    });
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
   }
 
   // ── Convert pending GIF & POST ─────────────────────────────────
